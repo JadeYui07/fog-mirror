@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#17272d">
+  <title>Fog Mirror · Yuzhuo's Playground Experiment</title>
+  <link href="https://api.fontshare.com/v2/css?f[]=satoshi@300,400,500,600,700&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: dark; font-family:"Satoshi",system-ui,sans-serif; }
+    * { box-sizing:border-box; }
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; background:#17272d; }
+    button, input { font:inherit; }
+    button { cursor:pointer; }
+    button:focus-visible, input:focus-visible { outline:2px solid #e8ddc1; outline-offset:3px; }
+    .mirror { position:fixed; inset:0; overflow:hidden; cursor:crosshair; }
+    #view { display:block; width:100%; height:100%; touch-action:none; }
+    .mirror::after { content:""; position:absolute; inset:0; pointer-events:none; box-shadow:inset 0 0 100px rgba(16,33,41,.13); }
+    .brand { position:absolute; z-index:2; top:max(22px,env(safe-area-inset-top)); left:max(24px,env(safe-area-inset-left)); color:#fff; text-shadow:0 1px 18px rgba(12,27,35,.55); pointer-events:none; }
+    .brand strong { display:block; font-size:18px; font-weight:500; letter-spacing:.24em; }
+    .brand span { display:block; margin-top:7px; font-size:9px; letter-spacing:.27em; opacity:.75; }
+    .panel-toggle { position:absolute; z-index:4; top:max(20px,env(safe-area-inset-top)); right:max(22px,env(safe-area-inset-right)); min-height:40px; padding:0 15px; border:1px solid rgba(255,255,255,.42); border-radius:999px; background:rgba(15,32,39,.38); color:#fff; backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px); font-size:12px; letter-spacing:.08em; }
+    .panel-toggle:hover { background:rgba(15,32,39,.64); }
+    .panel { position:absolute; z-index:3; top:72px; right:max(22px,env(safe-area-inset-right)); width:min(330px,calc(100vw - 32px)); max-height:calc(100dvh - 96px); overflow:auto; padding:22px; border:1px solid rgba(255,255,255,.24); border-radius:16px; background:rgba(20,37,44,.78); color:#f2f5f2; box-shadow:0 24px 70px rgba(5,17,23,.28); backdrop-filter:blur(28px) saturate(1.25); -webkit-backdrop-filter:blur(28px) saturate(1.25); transition:opacity .2s,transform .2s,visibility .2s; cursor:auto; }
+    .panel.is-closed { opacity:0; visibility:hidden; transform:translateY(-8px); pointer-events:none; }
+    .panel-head { display:flex; justify-content:space-between; align-items:start; gap:12px; margin-bottom:18px; }
+    .panel-kicker { margin:0 0 8px; color:#c6d4d5; font:500 10px "Satoshi",system-ui,sans-serif; letter-spacing:.19em; }
+    .panel h1 { margin:0; font-size:22px; font-weight:500; letter-spacing:.04em; }
+    .panel-desc { margin:9px 0 0; color:#c0cccd; font-size:11px; line-height:1.6; }
+    .panel-actions { display:flex; gap:8px; margin-bottom:18px; }
+    .panel-actions button { min-height:37px; border-radius:7px; padding:0 12px; font-size:11px; }
+    .camera-button { flex:1; border:1px solid #ece5d4; background:#e9e1cf; color:#1b3034; font-weight:650; }
+    .camera-button:hover { background:#fff3da; }
+    .reset-button { border:1px solid rgba(255,255,255,.3); background:rgba(255,255,255,.05); color:#f0f4f1; }
+    .reset-button:hover { background:rgba(255,255,255,.15); }
+    .sliders { border-top:1px solid rgba(255,255,255,.16); }
+    .control { padding:12px 0 10px; border-bottom:1px solid rgba(255,255,255,.11); }
+    .control-label { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:9px; }
+    .control-label label { font-size:12px; }
+    .control-label output { font:500 11px "Satoshi",system-ui,sans-serif; color:#e6d9bc; }
+    .control input { display:block; width:100%; height:15px; margin:0; accent-color:#e3d6b7; cursor:pointer; }
+    .control small { display:block; margin-top:3px; color:#b7c3c4; font-size:10px; line-height:1.4; }
+    .panel-foot { margin:16px 0 0; color:#b7c4c5; font-size:10px; line-height:1.65; }
+    .hud { position:absolute; z-index:2; left:max(24px,env(safe-area-inset-left)); right:max(24px,env(safe-area-inset-right)); bottom:max(21px,env(safe-area-inset-bottom)); display:flex; justify-content:space-between; align-items:end; gap:16px; pointer-events:none; color:#fff; text-shadow:0 1px 16px rgba(7,25,31,.72); }
+    .hud p { margin:0; font-size:12px; line-height:1.5; }
+    .hud small { display:block; margin-top:4px; font-size:10px; opacity:.8; }
+    .hud-index { font:500 10px "Satoshi",system-ui,sans-serif; letter-spacing:.16em; white-space:nowrap; }
+    @media (max-width:640px) {
+      .brand { top:22px; left:18px; }
+      .panel-toggle { top:18px; right:16px; }
+      .panel { top:auto; right:12px; bottom:12px; width:calc(100vw - 24px); max-height:min(75dvh,650px); padding:18px; }
+      .hud { left:18px; right:18px; bottom:18px; }
+      .hud-index { display:none; }
+    }
+    @media (prefers-reduced-motion:reduce) { .panel { transition:none; } }
+  </style>
+</head>
+<body>
+  <main class="mirror" id="mirror" aria-label="Fullscreen interactive fog mirror; wipe with gestures, a pointer, or touch">
+    <canvas id="view"></canvas>
+    <div class="brand" aria-hidden="true"><strong>Fog Mirror</strong><span>Yuzhuo's playground experiment</span></div>
+    <button class="panel-toggle" id="panelToggle" type="button" aria-controls="panel" aria-expanded="true">Controls ×</button>
+    <aside class="panel" id="panel" aria-label="Fog Mirror controls">
+      <div class="panel-head"><div><p class="panel-kicker">LIVE CONTROLS</p><h1>Condensation Lab</h1><p class="panel-desc">Tune the glass and gesture response in real time.</p></div></div>
+      <div class="panel-actions"><button class="camera-button" id="cameraButton" type="button">Enable Camera</button><button class="reset-button" id="resetButton" type="button">Reset Fog</button></div>
+      <div class="sliders">
+        <div class="control"><div class="control-label"><label for="fog">Fog Density</label><output for="fog" id="fogValue"></output></div><input id="fog" data-setting="fog" type="range" min="0" max="95" value="20"><small>Adjust the milky condensation on the glass.</small></div>
+        <div class="control"><div class="control-label"><label for="blur">Mirror Blur</label><output for="blur" id="blurValue"></output></div><input id="blur" data-setting="blur" type="range" min="0" max="42" value="23"><small>Control how softly the reflection appears through fog.</small></div>
+        <div class="control"><div class="control-label"><label for="droplets">Droplet Density</label><output for="droplets" id="dropletsValue"></output></div><input id="droplets" data-setting="droplets" type="range" min="0" max="100" value="7"><small>Set the amount of fine condensation and droplets.</small></div>
+        <div class="control"><div class="control-label"><label for="brush">Wipe Radius</label><output for="brush" id="brushValue"></output></div><input id="brush" data-setting="brush" type="range" min="7" max="38" value="15"><small>Shared by pointer, touch, and fine hand gestures.</small></div>
+        <div class="control"><div class="control-label"><label for="softness">Wipe Softness</label><output for="softness" id="softnessValue"></output></div><input id="softness" data-setting="softness" type="range" min="0" max="100" value="51"><small>Raise it for a softer wiped edge.</small></div>
+        <div class="control"><div class="control-label"><label for="refog">Refog Speed</label><output for="refog" id="refogValue"></output></div><input id="refog" data-setting="refog" type="range" min="0" max="100" value="11"><small>Set to 0 to preserve every wiped mark.</small></div>
+        <div class="control"><div class="control-label"><label for="sensitivity">Pinch Sensitivity</label><output for="sensitivity" id="sensitivityValue"></output></div><input id="sensitivity" data-setting="sensitivity" type="range" min="0" max="100" value="62"><small>Raise it to trigger without pinching as tightly.</small></div>
+        <div class="control"><div class="control-label"><label for="smoothing">Motion Smoothing</label><output for="smoothing" id="smoothingValue"></output></div><input id="smoothing" data-setting="smoothing" type="range" min="0" max="85" value="60"><small>Reduces jitter; high values add visible lag.</small></div>
+        <div class="control"><div class="control-label"><label for="breathSize">Breath Radius</label><output for="breathSize" id="breathSizeValue"></output></div><input id="breathSize" data-setting="breathSize" type="range" min="35" max="100" value="62"><small>Spread fog outward from the mouth with a soft edge.</small></div>
+        <div class="control"><div class="control-label"><label for="breathStrength">Breath Density</label><output for="breathStrength" id="breathStrengthValue"></output></div><input id="breathStrength" data-setting="breathStrength" type="range" min="20" max="100" value="39"><small>Control the visibility of freshly formed fog.</small></div>
+      </div>
+      <p class="panel-foot">Point with one finger for a fine wipe. Open all five fingers for a broad wipe. A thumb-and-index pinch also makes a fine wipe. Camera frames stay on your device; the gesture models need a network connection on first load.</p>
+    </aside>
+    <div class="hud"><div><p id="status" role="status" aria-live="polite">Demo mode · Enable the camera or drag across the mirror</p><small>Point to wipe · Open your palm for a broad wipe · Open your mouth to fog</small></div><span class="hud-index">POINT / PALM / BREATH</span></div>
+  </main>
+  <video id="camera" autoplay muted playsinline hidden></video>
+  <script>
+  (() => {
+    const mirror = document.getElementById('mirror');
+    const canvas = document.getElementById('view');
+    const ctx = canvas.getContext('2d', { alpha:false });
+    const video = document.getElementById('camera');
+    const cameraButton = document.getElementById('cameraButton');
+    const resetButton = document.getElementById('resetButton');
+    const status = document.getElementById('status');
+    const panel = document.getElementById('panel');
+    const panelToggle = document.getElementById('panelToggle');
+    const settings = { fog:20, blur:23, droplets:7, brush:15, softness:51, refog:11, sensitivity:62, smoothing:60, breathSize:62, breathStrength:39 };
+    const scene = document.createElement('canvas');
+    const sceneCtx = scene.getContext('2d');
+    const fogFrame = document.createElement('canvas');
+    const fogFrameCtx = fogFrame.getContext('2d');
+    const fogLayer = document.createElement('canvas');
+    const fogCtx = fogLayer.getContext('2d');
+    const mask = document.createElement('canvas');
+    const maskCtx = mask.getContext('2d');
+    const texture = document.createElement('canvas');
+    const textureCtx = texture.getContext('2d');
+    const handInput = document.createElement('canvas');
+    const handInputCtx = handInput.getContext('2d');
+    const faceInput = document.createElement('canvas');
+    const faceInputCtx = faceInput.getContext('2d');
+    handInput.width=640; handInput.height=360;
+    faceInput.width=320; faceInput.height=180;
+    let stream = null, w = 0, h = 0, lastFade = 0, sceneDirty = true;
+    let pointerDown = false, pointerPath = null, tracked = null, glint = null, pinched = false, pointFrames = 0, palmFrames = 0;
+    let hands = null, faceMesh = null, modelsPromise = null, frameRequest = null, frameLoopRunning = false;
+    let inferenceBusy = false, handFailures = 0, handRetryAt = 0;
+    let lastFaceFrame = 0, mouthOpenSince = 0, lastBreath = 0;
+    const breaths = [];
+    let seed = 92814;
+    const random = () => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296);
+    const pixelRatio = () => w / mirror.clientWidth;
+    const brushRadius = () => settings.brush * pixelRatio();
+
+    function setPanel(open) {
+      panel.classList.toggle('is-closed', !open);
+      panelToggle.setAttribute('aria-expanded', String(open));
+      panelToggle.textContent = open ? 'Controls ×' : 'Controls ↗';
+    }
+    panelToggle.addEventListener('click', () => setPanel(panel.classList.contains('is-closed')));
+    if (matchMedia('(max-width:640px)').matches) setPanel(false);
+
+    for (const input of document.querySelectorAll('[data-setting]')) {
+      const key = input.dataset.setting;
+      const output = document.getElementById(`${key}Value`);
+      const update = () => {
+        settings[key] = Number(input.value);
+        output.textContent = key === 'blur' || key === 'brush' ? `${settings[key]} px` : key === 'refog' && !settings[key] ? 'Off' : `${settings[key]}%`;
+        if (key === 'droplets' && w) makeTexture();
+        if (key === 'blur') sceneDirty=true;
+      };
+      input.addEventListener('input', update);
+      update();
+    }
+
+    function size() {
+      const bounds = mirror.getBoundingClientRect();
+      const scale = Math.min(devicePixelRatio || 1, 1.5);
+      const oldMask = document.createElement('canvas');
+      oldMask.width = mask.width; oldMask.height = mask.height;
+      if (oldMask.width) oldMask.getContext('2d').drawImage(mask, 0, 0);
+      w = canvas.width = scene.width = fogLayer.width = mask.width = texture.width = Math.round(bounds.width * scale);
+      h = canvas.height = scene.height = fogLayer.height = mask.height = texture.height = Math.round(bounds.height * scale);
+      fogFrame.width = Math.max(1, Math.round(w * .5));
+      fogFrame.height = Math.max(1, Math.round(h * .5));
+      sceneDirty=true;
+      if (oldMask.width) maskCtx.drawImage(oldMask, 0, 0, w, h);
+      makeTexture();
+    }
+
+    function makeTexture() {
+      textureCtx.clearRect(0, 0, w, h);
+      seed = 92814;
+      const amount = settings.droplets / 100;
+      for (let i = 0; i < Math.round(w * h / 350 * amount); i++) {
+        const x = random() * w, y = random() * h, r = .25 + random() * 1.25;
+        textureCtx.fillStyle = `rgba(255,255,255,${.035 + random() * .14})`;
+        textureCtx.beginPath(); textureCtx.arc(x, y, r, 0, Math.PI * 2); textureCtx.fill();
+      }
+      for (let i = 0; i < Math.round(145 * amount); i++) {
+        const x = random() * w, y = random() * h, r = (1.2 + random() * 4) * pixelRatio();
+        textureCtx.fillStyle = 'rgba(235,249,251,.15)';
+        textureCtx.beginPath(); textureCtx.ellipse(x, y, r*.65, r*1.4, -.15, 0, Math.PI*2); textureCtx.fill();
+        textureCtx.strokeStyle = 'rgba(35,65,75,.14)'; textureCtx.lineWidth = Math.max(1, pixelRatio()*.7);
+        textureCtx.beginPath(); textureCtx.arc(x, y, r*1.2, -.55, 1.65); textureCtx.stroke();
+        textureCtx.fillStyle = 'rgba(255,255,255,.25)';
+        textureCtx.beginPath(); textureCtx.arc(x-r*.2, y-r*.45, Math.max(.6,r*.22), 0, Math.PI*2); textureCtx.fill();
+      }
+    }
+
+    function drawCover(target, source, tw, th, mirrored) {
+      const sw = source.videoWidth || source.width, sh = source.videoHeight || source.height;
+      if (!sw || !sh) return;
+      const scale = Math.max(tw/sw, th/sh), dw = sw*scale, dh = sh*scale;
+      target.save();
+      if (mirrored) { target.translate(tw,0); target.scale(-1,1); }
+      target.drawImage(source,(tw-dw)/2,(th-dh)/2,dw,dh);
+      target.restore();
+    }
+
+    function drawDemo(target) {
+      const room = target.createLinearGradient(0,0,w,h);
+      room.addColorStop(0,'#344f58'); room.addColorStop(.5,'#8a9b9c'); room.addColorStop(1,'#344d53');
+      target.fillStyle = room; target.fillRect(0,0,w,h);
+      const light = target.createLinearGradient(0,0,w*.55,h);
+      light.addColorStop(0,'rgba(224,235,226,.5)'); light.addColorStop(1,'rgba(225,239,234,0)');
+      target.fillStyle = light; target.fillRect(w*.1,0,w*.46,h*.8);
+      target.fillStyle = 'rgba(33,61,70,.48)'; target.fillRect(w*.23,0,w*.014,h*.82);
+      target.fillRect(w*.1,h*.35,w*.47,h*.013);
+      target.fillStyle = 'rgba(20,46,55,.28)'; target.fillRect(w*.75,0,w*.012,h);
+      target.fillStyle = 'rgba(235,242,235,.18)'; target.fillRect(w*.78,h*.15,w*.14,h*.54);
+      target.fillStyle = 'rgba(26,50,58,.25)'; target.fillRect(0,h*.82,w,h*.18);
+    }
+
+    function paintScene(target) {
+      if (stream && video.readyState >= 2) drawCover(target,video,w,h,true);
+      else drawDemo(target);
+    }
+
+    function eraseCurve(path,x,y,radius,strength) {
+      maskCtx.save();
+      maskCtx.globalCompositeOperation='source-over';
+      maskCtx.strokeStyle=`rgba(255,255,255,${strength})`;
+      maskCtx.fillStyle=`rgba(255,255,255,${strength})`;
+      maskCtx.lineWidth=radius*2;
+      maskCtx.lineCap='round'; maskCtx.lineJoin='round';
+      maskCtx.shadowColor=`rgba(255,255,255,${strength*.7})`;
+      maskCtx.shadowBlur=radius*(settings.softness/100)*.65;
+      if (path.lx===undefined) {
+        maskCtx.beginPath(); maskCtx.arc(x,y,radius,0,Math.PI*2); maskCtx.fill();
+        path.lx=x; path.ly=y; path.mx=x; path.my=y;
+      } else {
+        const mx=(path.lx+x)/2, my=(path.ly+y)/2;
+        maskCtx.beginPath(); maskCtx.moveTo(path.mx,path.my);
+        maskCtx.quadraticCurveTo(path.lx,path.ly,mx,my); maskCtx.stroke();
+        path.mx=mx; path.my=my; path.lx=x; path.ly=y;
+      }
+      maskCtx.restore();
+      glint={x,y,at:performance.now()};
+    }
+    function resetPath(path) {
+      if (!path) return;
+      path.lx=undefined; path.ly=undefined; path.mx=undefined; path.my=undefined;
+      path.fx=undefined; path.fy=undefined; path.palmCarry=0;
+    }
+    function palmStamp(path,x,y,radius) {
+      const stamp=(sx,sy) => {
+        const gradient=maskCtx.createRadialGradient(sx,sy,0,sx,sy,radius);
+        gradient.addColorStop(0,'rgba(255,255,255,.66)');
+        gradient.addColorStop(.7,'rgba(255,255,255,.48)');
+        gradient.addColorStop(1,'rgba(255,255,255,0)');
+        maskCtx.fillStyle=gradient;
+        maskCtx.beginPath(); maskCtx.arc(sx,sy,radius,0,Math.PI*2); maskCtx.fill();
+      };
+      maskCtx.save(); maskCtx.globalCompositeOperation='source-over';
+      if (path.fx===undefined) {
+        stamp(x,y); path.fx=x; path.fy=y; path.palmCarry=0;
+      } else {
+        const dx=x-path.fx, dy=y-path.fy, distance=Math.hypot(dx,dy);
+        if (distance>Math.max(w,h)*.3) {
+          stamp(x,y); path.palmCarry=0;
+        } else if (distance) {
+          const step=Math.max(1,radius*.5);
+          const carry=path.palmCarry||0;
+          const wanted=Math.floor((carry+distance)/step);
+          const count=Math.min(40,wanted);
+          const first=step-carry;
+          for (let i=0;i<count;i++) {
+            const t=Math.min(1,(first+i*step)/distance);
+            stamp(path.fx+dx*t,path.fy+dy*t);
+          }
+          path.palmCarry=wanted>40?0:(carry+distance-count*step)%step;
+        }
+        path.fx=x; path.fy=y;
+      }
+      maskCtx.restore();
+      glint={x,y,at:performance.now()};
+    }
+
+    function landmarkPoint(point) {
+      const scale=Math.max(w/video.videoWidth,h/video.videoHeight);
+      const dw=video.videoWidth*scale, dh=video.videoHeight*scale;
+      return {x:(w-dw)/2+(1-point.x)*dw,y:(h-dh)/2+point.y*dh};
+    }
+
+    function onHands(results) {
+      if (!stream) return;
+      const landmarks=results.multiHandLandmarks?.[0];
+      if (!landmarks) {
+        pointFrames=0; palmFrames=0;
+        if (tracked) tracked.live=false;
+        return;
+      }
+      const thumb=landmarks[4], index=landmarks[8];
+      const palm=Math.hypot(landmarks[0].x-landmarks[9].x,landmarks[0].y-landmarks[9].y)||.12;
+      const ratio=Math.hypot(thumb.x-index.x,thumb.y-index.y)/palm;
+      const fingerExtended=(tip,pip,mcp) => {
+        const tipToWrist=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
+        const pipToWrist=Math.hypot(landmarks[pip].x-landmarks[0].x,landmarks[pip].y-landmarks[0].y);
+        const a={x:landmarks[mcp].x-landmarks[pip].x,y:landmarks[mcp].y-landmarks[pip].y};
+        const b={x:landmarks[tip].x-landmarks[pip].x,y:landmarks[tip].y-landmarks[pip].y};
+        const straightCos=(a.x*b.x+a.y*b.y)/((Math.hypot(a.x,a.y)*Math.hypot(b.x,b.y))||1);
+        return tipToWrist>pipToWrist*1.08||(tipToWrist>pipToWrist*.92&&straightCos<-.72);
+      };
+      const indexExtended=fingerExtended(8,6,5);
+      const middleExtended=fingerExtended(12,10,9);
+      const ringExtended=fingerExtended(16,14,13);
+      const pinkyExtended=fingerExtended(20,18,17);
+      const thumbExtended=fingerExtended(4,3,2)&&Math.hypot(thumb.x-landmarks[9].x,thumb.y-landmarks[9].y)>Math.hypot(landmarks[3].x-landmarks[9].x,landmarks[3].y-landmarks[9].y)*1.08;
+      let otherCurled=0;
+      for (const [tip,joint] of [[8,6],[12,10],[16,14],[20,18]]) {
+        const tipDistance=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
+        const jointDistance=Math.hypot(landmarks[joint].x-landmarks[0].x,landmarks[joint].y-landmarks[0].y);
+        if (tipDistance<jointDistance) {
+          if (tip!==8) otherCurled++;
+        }
+      }
+      const pointPose=indexExtended&&otherCurled===3;
+      pointFrames=pointPose?Math.min(3,pointFrames+1):0;
+      const rawPoint=pointPose&&(tracked?.mode==='point'||pointFrames>=2);
+      const openPalm=thumbExtended&&indexExtended&&middleExtended&&ringExtended&&pinkyExtended&&ratio>.48;
+      palmFrames=openPalm?Math.min(3,palmFrames+1):0;
+      const rawPalm=openPalm&&(tracked?.mode==='palm'||palmFrames>=2);
+      const closedHand=!indexExtended&&otherCurled===3;
+      const pinchOn=.17+settings.sensitivity*.0008;
+      const pinchOff=pinchOn+.16;
+      const wasPinching=tracked?.drawing&&tracked.mode==='pinch';
+      const rawPinch=wasPinching ? ratio<pinchOff&&!closedHand&&!openPalm&&!pointPose : ratio<pinchOn&&indexExtended&&!openPalm&&!pointPose;
+      const detectedMode=rawPalm?'palm':rawPoint?'point':rawPinch?'pinch':null;
+      const pinchPoint=landmarkPoint({x:(thumb.x+index.x)/2,y:(thumb.y+index.y)/2});
+      const indexPoint=landmarkPoint(index);
+      const palmIds=[0,5,9,13,17];
+      const palmPoint=landmarkPoint({
+        x:palmIds.reduce((sum,id)=>sum+landmarks[id].x,0)/palmIds.length,
+        y:palmIds.reduce((sum,id)=>sum+landmarks[id].y,0)/palmIds.length
+      });
+      const indexKnuckle=landmarkPoint(landmarks[5]);
+      const pinkyKnuckle=landmarkPoint(landmarks[17]);
+      const wrist=landmarkPoint(landmarks[0]);
+      const middleKnuckle=landmarkPoint(landmarks[9]);
+      const palmRadius=Math.max(
+        Math.hypot(indexKnuckle.x-pinkyKnuckle.x,indexKnuckle.y-pinkyKnuckle.y),
+        Math.hypot(wrist.x-middleKnuckle.x,wrist.y-middleKnuckle.y)
+      )*1.6;
+      const previousMode=tracked?.mode||null;
+      const nextOffFrames=detectedMode?0:(tracked?.offFrames||0)+1;
+      const mode=detectedMode||((tracked?.drawing&&nextOffFrames<2)?previousMode:null);
+      const point=mode==='palm'?palmPoint:mode==='point'?indexPoint:pinchPoint;
+      if (point.x<0||point.x>w||point.y<0||point.y>h) return;
+      if (!tracked) tracked={tx:point.x,ty:point.y,x:point.x,y:point.y,drawing:false,mode:null,offFrames:0,seenAt:performance.now(),live:true};
+      const switched=mode&&tracked.mode&&mode!==tracked.mode;
+      const jumped=mode==='palm'&&Math.hypot(point.x-tracked.tx,point.y-tracked.ty)>Math.max(w,h)*.3;
+      if (switched||jumped) {
+        resetPath(tracked); tracked.x=point.x; tracked.y=point.y; tracked.tx=point.x; tracked.ty=point.y;
+      }
+      const landmarkEase=Math.max(.25,.70-settings.smoothing*.0042);
+      const tx=tracked.tx+(point.x-tracked.tx)*landmarkEase;
+      const ty=tracked.ty+(point.y-tracked.ty)*landmarkEase;
+      if (Math.hypot(tx-tracked.tx,ty-tracked.ty)>.0006*w) {tracked.tx=tx;tracked.ty=ty;}
+      tracked.offFrames=nextOffFrames;
+      const drawing=!!mode;
+      if (!drawing&&tracked.drawing) resetPath(tracked);
+      tracked.drawing=drawing; tracked.mode=mode||tracked.mode; tracked.radius=mode==='palm'?palmRadius:brushRadius();
+      tracked.seenAt=performance.now(); tracked.live=true;
+      pinched=drawing;
+      if (mode==='palm') {
+        if (status.textContent!=='Open palm · Broad wipe') status.textContent='Open palm · Broad wipe';
+      } else if (mode==='point') {
+        if (status.textContent!=='Pointing · Fine wipe') status.textContent='Pointing · Fine wipe';
+      } else if (mode==='pinch') {
+        if (status.textContent!=='Pinching · Fine wipe') status.textContent='Pinching · Fine wipe';
+      } else if (status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+    }
+
+    function advanceBrush(time) {
+      if (!tracked) return;
+      if (time-tracked.seenAt>250) {
+        if (tracked.drawing) resetPath(tracked);
+        tracked=null; pinched=false;
+        if (status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+        return;
+      }
+      const chase=Math.max(.10,.45-settings.smoothing*.0038);
+      tracked.x+=(tracked.tx-tracked.x)*chase;
+      tracked.y+=(tracked.ty-tracked.y)*chase;
+      if (tracked.drawing&&tracked.mode==='palm') palmStamp(tracked,tracked.x,tracked.y,tracked.radius);
+      else if (tracked.drawing) eraseCurve(tracked,tracked.x,tracked.y,brushRadius(),.96);
+      else resetPath(tracked);
+    }
+
+    function softBlob(target,x,y,radius,alpha) {
+      const gradient=target.createRadialGradient(x,y,0,x,y,radius);
+      gradient.addColorStop(0,`rgba(236,246,249,${alpha})`);
+      gradient.addColorStop(.42,`rgba(226,240,246,${alpha*.7})`);
+      gradient.addColorStop(1,'rgba(220,237,244,0)');
+      target.fillStyle=gradient;
+      target.beginPath(); target.arc(x,y,radius,0,Math.PI*2); target.fill();
+    }
+    function breathBlobs(x,y,r) {
+      return [[x,y,r],[x-r*.24,y-r*.07,r*.8],[x+r*.24,y+r*.04,r*.78],[x,y-r*.25,r*.7]];
+    }
+    function addBreath(point,time) {
+      const r=Math.min(w,h)*settings.breathSize/100;
+      const intensity=settings.breathStrength/100;
+      breaths.push({x:point.x,y:point.y,r,intensity,at:time});
+      if (breaths.length>5) breaths.shift();
+      maskCtx.save(); maskCtx.globalCompositeOperation='destination-out';
+      for (const [x,y,radius] of breathBlobs(point.x,point.y,r)) softBlob(maskCtx,x,y,radius,intensity*.72);
+      maskCtx.restore();
+      status.textContent='Fresh fog · Point or pinch to wipe it away';
+    }
+    function onFaces(results) {
+      if (!stream) return;
+      if (pinched) { mouthOpenSince=0; return; }
+      const landmarks=results.multiFaceLandmarks?.[0];
+      if (!landmarks) { mouthOpenSince=0; return; }
+      const top=landmarks[13], bottom=landmarks[14], left=landmarks[61], right=landmarks[291];
+      const mouthWidth=Math.hypot(left.x-right.x,left.y-right.y);
+      const openness=mouthWidth ? Math.hypot(top.x-bottom.x,top.y-bottom.y)/mouthWidth : 0;
+      const now=performance.now();
+      if (openness<.34) {
+        mouthOpenSince=0;
+        if (status.textContent.startsWith('Fresh fog') && performance.now()-lastBreath>1200) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+        return;
+      }
+      if (!mouthOpenSince) mouthOpenSince=now;
+      if (now-mouthOpenSince<180 || now-lastBreath<1100) return;
+      lastBreath=now;
+      addBreath(landmarkPoint({x:(top.x+bottom.x)/2,y:(top.y+bottom.y)/2}),now);
+    }
+
+    function loadScript(url) {
+      return new Promise((resolve,reject) => {
+        const script=document.createElement('script');
+        script.src=url; script.crossOrigin='anonymous'; script.onload=resolve; script.onerror=reject;
+        document.head.append(script);
+      });
+    }
+    async function loadModels() {
+      if (hands && faceMesh) return;
+      if (!modelsPromise) modelsPromise=(async () => {
+        await Promise.all([
+          loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js'),
+          loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js')
+        ]);
+        hands=new window.Hands({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`});
+        hands.setOptions({maxNumHands:1,modelComplexity:0,minDetectionConfidence:.6,minTrackingConfidence:.6});
+        hands.onResults(onHands);
+        faceMesh=new window.FaceMesh({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`});
+        faceMesh.setOptions({maxNumFaces:1,refineLandmarks:false,minDetectionConfidence:.6,minTrackingConfidence:.6});
+        faceMesh.onResults(onFaces);
+      })().catch(error=>{ modelsPromise=null; throw error; });
+      await modelsPromise;
+    }
+
+    async function submitFrame(time) {
+      if (!stream || video.readyState<2 || inferenceBusy) return;
+      inferenceBusy=true;
+      try {
+        if (hands && time>=handRetryAt) {
+          handInputCtx.drawImage(video,0,0,handInput.width,handInput.height);
+          try {
+            await hands.send({image:handInput});
+            if (handFailures && status.textContent.startsWith('Hand tracking paused')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+            handFailures=0;
+          } catch(error) {
+            handFailures++;
+            handRetryAt=time+Math.min(2000,250*2**Math.min(handFailures,3));
+            console.error('MediaPipe Hands inference failed:',error);
+            status.textContent='Hand tracking paused · Retrying automatically';
+          }
+        }
+        if (faceMesh && time-lastFaceFrame>140) {
+          lastFaceFrame=time;
+          faceInputCtx.drawImage(video,0,0,faceInput.width,faceInput.height);
+          try {
+            await faceMesh.send({image:faceInput});
+          } catch(error) {
+            console.error('MediaPipe Face Mesh inference failed:',error);
+            faceMesh=null;
+            status.textContent='Face tracking unavailable · Hand gestures still work';
+          }
+        }
+      } finally {
+        inferenceBusy=false;
+      }
+    }
+    function startFrameLoop() {
+      frameLoopRunning=true;
+      if (video.requestVideoFrameCallback) {
+        const next=(time) => {
+          if (!frameLoopRunning) return;
+          frameRequest=video.requestVideoFrameCallback(next);
+          sceneDirty=true;
+          submitFrame(time);
+        };
+        frameRequest=video.requestVideoFrameCallback(next);
+      } else {
+        let lastVideoTime=-1;
+        const next=(time) => {
+          if (!frameLoopRunning) return;
+          frameRequest=requestAnimationFrame(next);
+          if (video.currentTime!==lastVideoTime) {lastVideoTime=video.currentTime; sceneDirty=true; submitFrame(time);}
+        };
+        frameRequest=requestAnimationFrame(next);
+      }
+    }
+    function stopFrameLoop() {
+      frameLoopRunning=false;
+      if (frameRequest!==null) {
+        if (video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frameRequest);
+        else cancelAnimationFrame(frameRequest);
+      }
+      frameRequest=null; pinched=false; pointFrames=0; palmFrames=0; tracked=null; mouthOpenSince=0; sceneDirty=true;
+    }
+
+    function render(time) {
+      requestAnimationFrame(render);
+      if (!w || !h) return;
+      advanceBrush(time);
+      if (settings.refog && time-lastFade>500) {
+        const halfLife = 120 - settings.refog*1.15;
+        const factor = Math.exp(-Math.LN2*(time-lastFade)/1000/halfLife);
+        maskCtx.save(); maskCtx.globalCompositeOperation='destination-in';
+        maskCtx.fillStyle=`rgba(255,255,255,${factor})`; maskCtx.fillRect(0,0,w,h); maskCtx.restore();
+        lastFade=time;
+      } else if (!settings.refog) lastFade=time;
+      if (sceneDirty) {
+        sceneCtx.clearRect(0,0,w,h); paintScene(sceneCtx);
+        fogFrameCtx.clearRect(0,0,fogFrame.width,fogFrame.height);
+        fogFrameCtx.save();
+        fogFrameCtx.filter=`blur(${settings.blur*pixelRatio()*.5}px) saturate(.78)`;
+        fogFrameCtx.drawImage(scene,0,0,fogFrame.width,fogFrame.height);
+        fogFrameCtx.restore();
+        sceneDirty=false;
+      }
+      fogCtx.clearRect(0,0,w,h);
+      fogCtx.drawImage(fogFrame,0,0,w,h);
+      const haze = fogCtx.createLinearGradient(0,0,w,h);
+      const a = settings.fog/100;
+      haze.addColorStop(0,`rgba(226,239,244,${Math.min(.98,a*1.07)})`);
+      haze.addColorStop(.54,`rgba(217,230,237,${a})`);
+      haze.addColorStop(1,`rgba(203,222,232,${Math.min(.98,a*.92)})`);
+      fogCtx.fillStyle=haze; fogCtx.fillRect(0,0,w,h);
+      fogCtx.globalAlpha=Math.min(1,a*1.2); fogCtx.drawImage(texture,0,0); fogCtx.globalAlpha=1;
+      fogCtx.save(); fogCtx.globalCompositeOperation='destination-out'; fogCtx.drawImage(mask,0,0); fogCtx.restore();
+      ctx.drawImage(scene,0,0);
+      ctx.drawImage(fogLayer,0,0);
+      for (let i=breaths.length-1;i>=0;i--) {
+        const breath=breaths[i], age=time-breath.at;
+        if (age>6500) { breaths.splice(i,1); continue; }
+        const alpha=breath.intensity*.34*Math.pow(1-age/6500,1.5);
+        for (const [x,y,radius] of breathBlobs(breath.x,breath.y,breath.r)) softBlob(ctx,x,y,radius,alpha);
+      }
+      if (glint && time-glint.at<340) {
+        const t=1-(time-glint.at)/340;
+        ctx.strokeStyle=`rgba(248,252,249,${t*.26})`; ctx.lineWidth=Math.max(1,pixelRatio());
+        ctx.beginPath(); ctx.arc(glint.x,glint.y,brushRadius()*(.7+(1-t)*.2),0,Math.PI*2); ctx.stroke();
+      }
+    }
+
+    function pointerPosition(event) {
+      const rect=canvas.getBoundingClientRect();
+      return {x:(event.clientX-rect.left)*w/rect.width,y:(event.clientY-rect.top)*h/rect.height};
+    }
+    mirror.addEventListener('pointerdown',event => {
+      if (event.target!==canvas) return;
+      pointerDown=true; canvas.setPointerCapture(event.pointerId);
+      const point=pointerPosition(event);
+      pointerPath={}; eraseCurve(pointerPath,point.x,point.y,brushRadius(),.96);
+    });
+    mirror.addEventListener('pointermove',event => {
+      if (!pointerDown) return;
+      const point=pointerPosition(event); eraseCurve(pointerPath,point.x,point.y,brushRadius(),.96);
+    });
+    function endPointer() { pointerDown=false; pointerPath=null; }
+    mirror.addEventListener('pointerup',endPointer);
+    mirror.addEventListener('pointercancel',endPointer);
+    resetButton.addEventListener('click',() => {
+      maskCtx.clearRect(0,0,w,h); breaths.length=0; glint=null;
+      status.textContent=stream?'Fog restored · Point or open your palm to wipe':'Fog restored · Drag across the mirror to try it';
+    });
+    document.addEventListener('keydown',event => { if (event.key==='Escape') setPanel(false); });
+
+    async function toggleCamera() {
+      if (stream) {
+        stopFrameLoop(); stream.getTracks().forEach(track=>track.stop()); stream=null; video.srcObject=null;
+        cameraButton.textContent='Enable Camera'; status.textContent='Demo mode · Drag across the mirror to wipe'; return;
+      }
+      cameraButton.disabled=true; status.textContent='Loading hand and face tracking…';
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) throw new Error('unsupported');
+        await loadModels();
+        status.textContent='Requesting camera permission…';
+        stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:'user',width:{ideal:1280},height:{ideal:720},frameRate:{ideal:60}}});
+        video.srcObject=stream; await video.play();
+        maskCtx.clearRect(0,0,w,h); breaths.length=0;
+        startFrameLoop();
+        cameraButton.textContent='Disable Camera'; status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+        stream.getVideoTracks()[0].addEventListener('ended',() => {
+          stopFrameLoop(); stream=null; video.srcObject=null; cameraButton.textContent='Enable Camera';
+          status.textContent='Camera disconnected · Drag across the mirror to wipe';
+        },{once:true});
+      } catch(error) {
+        stopFrameLoop();
+        if (stream) stream.getTracks().forEach(track=>track.stop());
+        stream=null; video.srcObject=null;
+        status.textContent=error.name==='NotAllowedError'?'Camera permission denied · Drag across the mirror to wipe':error.message==='unsupported'?'Use localhost or HTTPS to enable the camera':'Tracking models or camera unavailable · Drag to wipe';
+      } finally { cameraButton.disabled=false; }
+    }
+    cameraButton.addEventListener('click',toggleCamera);
+    window.addEventListener('pagehide',() => { stopFrameLoop(); if (stream) stream.getTracks().forEach(track=>track.stop()); });
+    new ResizeObserver(size).observe(mirror);
+    size(); requestAnimationFrame(render);
+  })();
+  </script>
+</body>
+</html>
