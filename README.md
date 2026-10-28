@@ -4,6 +4,8 @@
 
 Fog Mirror turns your webcam into a full-screen condensation mirror. Point at the glass to make a precise wipe, open your palm to clear a broad area, or open your mouth to let fog bloom back over the reflection.
 
+![Fog Mirror running with a heart wiped through the condensation](./assets/fog-mirror-demo.png)
+
 The experience lives in one file: [`fog.html`](./fog.html). There is no build step and no microphone access.
 
 ## Run it locally
@@ -33,6 +35,8 @@ Chrome or Edge is recommended. Allow camera access when the browser asks. The fi
 | Pointer fallback | Drag with a mouse, trackpad, or touch | Clears the fog without a camera |
 
 The open-palm gesture waits for two consecutive detections before it starts wiping. A closed fist does nothing, which helps separate the broad wipe from the single-finger gesture.
+
+The mirror can track up to two hands at once. Each hand keeps its own gesture state and wipe path.
 
 ## Live controls
 
@@ -74,6 +78,36 @@ The mirror is rendered with layered HTML5 canvases:
 
 The hand and face models run in a shared serial inference queue. This avoids asking both models to use the browser's inference resources at the same time.
 
+## Design and engineering challenges
+
+### Turning sparse tracking data into a fluid wipe
+
+Hand landmarks do not arrive at the same rhythm as the browser's display frames. Drawing only when a new model result arrived made the wipe feel segmented and jittery. I separated tracking from rendering: MediaPipe updates a target position, while the brush follows that target on every animation frame. Two stages of smoothing and quadratic curves connect the sampled points without making the gesture feel too delayed.
+
+### Distinguishing deliberate gestures from similar hand shapes
+
+Several gestures look surprisingly similar to a landmark model. A pinch can resemble a curled hand, and a raised index finger can briefly appear while the user is opening their palm. I iterated on a small, mutually exclusive gesture vocabulary: an extended index finger creates a fine wipe, five open fingers create a broad wipe, and a closed fist does nothing. The open-palm action requires two consecutive detections, while the pinch uses separate activation and release thresholds to reduce flicker.
+
+### Moving from one hand to two
+
+The first version used MediaPipe's `maxNumHands: 1`, so the model could only return one hand even when both were visible. Changing it to `maxNumHands: 2` exposed a second problem: the brush position, smoothing, gesture debounce, and drawing mode were all stored as one global state. I refactored them into independent tracked-hand states so two hands can wipe at the same time without sharing or jumping between paths.
+
+### Keeping a broad wipe stable after tracking gaps
+
+A large brush makes tracking errors much more visible. If a hand disappeared and reappeared elsewhere, connecting the two positions produced a long accidental streak. The broad wipe is sized from the visible palm, stamped by travel distance rather than frame count, and reset when the tracked position jumps across a large part of the screen.
+
+### Sharing one browser thread between two vision models
+
+The interaction needs hand landmarks for wiping and face landmarks for breathing. Running both models at the same time caused inference contention and intermittent hand-tracking failures. I moved them into a shared serial queue, used the lightweight hand model, and sampled Face Mesh less often than the hand tracker. The display loop remains independent, so the mirror can keep animating between model updates.
+
+### Simulating breath without listening to the user
+
+The fog needed to feel responsive to breathing without requesting microphone access. Face Mesh measures mouth openness and waits for a brief sustained opening before adding a large radial fog bloom. A cooldown prevents repeated triggers, and a feathered gradient gives the new condensation a soft boundary.
+
+### Building condensation from layers
+
+A flat white overlay looked like a screen tint rather than wet glass. The final effect combines a mirrored camera image, a blurred reflection, milky haze, procedural droplets, and a separate wipe mask. The independent mask also makes refogging possible without altering the live video underneath.
+
 ## Troubleshooting
 
 ### The camera does not start
@@ -104,8 +138,9 @@ The hand and face models run in a shared serial inference queue. This avoids ask
 ## Project structure
 
 ```text
-fog.html   # Complete interactive experience
-README.md  # This guide
+assets/fog-mirror-demo.png  # README screenshot
+fog.html                    # Complete interactive experience
+README.md                   # This guide
 ```
 
 Designed and built by **Yuzhuo Zhang** as a playground experiment.

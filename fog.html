@@ -109,7 +109,8 @@
     handInput.width=640; handInput.height=360;
     faceInput.width=320; faceInput.height=180;
     let stream = null, w = 0, h = 0, lastFade = 0, sceneDirty = true;
-    let pointerDown = false, pointerPath = null, tracked = null, glint = null, pinched = false, pointFrames = 0, palmFrames = 0;
+    let pointerDown = false, pointerPath = null, glint = null, handDrawing = false;
+    const trackedHands = new Map();
     let hands = null, faceMesh = null, modelsPromise = null, frameRequest = null, frameLoopRunning = false;
     let inferenceBusy = false, handFailures = 0, handRetryAt = 0;
     let lastFaceFrame = 0, mouthOpenSince = 0, lastBreath = 0;
@@ -272,107 +273,116 @@
 
     function onHands(results) {
       if (!stream) return;
-      const landmarks=results.multiHandLandmarks?.[0];
-      if (!landmarks) {
-        pointFrames=0; palmFrames=0;
-        if (tracked) tracked.live=false;
-        return;
-      }
-      const thumb=landmarks[4], index=landmarks[8];
-      const palm=Math.hypot(landmarks[0].x-landmarks[9].x,landmarks[0].y-landmarks[9].y)||.12;
-      const ratio=Math.hypot(thumb.x-index.x,thumb.y-index.y)/palm;
-      const fingerExtended=(tip,pip,mcp) => {
-        const tipToWrist=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
-        const pipToWrist=Math.hypot(landmarks[pip].x-landmarks[0].x,landmarks[pip].y-landmarks[0].y);
-        const a={x:landmarks[mcp].x-landmarks[pip].x,y:landmarks[mcp].y-landmarks[pip].y};
-        const b={x:landmarks[tip].x-landmarks[pip].x,y:landmarks[tip].y-landmarks[pip].y};
-        const straightCos=(a.x*b.x+a.y*b.y)/((Math.hypot(a.x,a.y)*Math.hypot(b.x,b.y))||1);
-        return tipToWrist>pipToWrist*1.08||(tipToWrist>pipToWrist*.92&&straightCos<-.72);
-      };
-      const indexExtended=fingerExtended(8,6,5);
-      const middleExtended=fingerExtended(12,10,9);
-      const ringExtended=fingerExtended(16,14,13);
-      const pinkyExtended=fingerExtended(20,18,17);
-      const thumbExtended=fingerExtended(4,3,2)&&Math.hypot(thumb.x-landmarks[9].x,thumb.y-landmarks[9].y)>Math.hypot(landmarks[3].x-landmarks[9].x,landmarks[3].y-landmarks[9].y)*1.08;
-      let otherCurled=0;
-      for (const [tip,joint] of [[8,6],[12,10],[16,14],[20,18]]) {
-        const tipDistance=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
-        const jointDistance=Math.hypot(landmarks[joint].x-landmarks[0].x,landmarks[joint].y-landmarks[0].y);
-        if (tipDistance<jointDistance) {
-          if (tip!==8) otherCurled++;
+      const allLandmarks=results.multiHandLandmarks||[];
+      const seen=new Set();
+      for (let handIndex=0;handIndex<allLandmarks.length;handIndex++) {
+        const landmarks=allLandmarks[handIndex];
+        const key=results.multiHandedness?.[handIndex]?.label||`hand-${handIndex}`;
+        seen.add(key);
+        const thumb=landmarks[4], index=landmarks[8];
+        const indexPoint=landmarkPoint(index);
+        let tracked=trackedHands.get(key);
+        if (!tracked) {
+          tracked={tx:indexPoint.x,ty:indexPoint.y,x:indexPoint.x,y:indexPoint.y,drawing:false,mode:null,offFrames:0,pointFrames:0,palmFrames:0,seenAt:performance.now(),live:true};
+          trackedHands.set(key,tracked);
         }
+        const palm=Math.hypot(landmarks[0].x-landmarks[9].x,landmarks[0].y-landmarks[9].y)||.12;
+        const ratio=Math.hypot(thumb.x-index.x,thumb.y-index.y)/palm;
+        const fingerExtended=(tip,pip,mcp) => {
+          const tipToWrist=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
+          const pipToWrist=Math.hypot(landmarks[pip].x-landmarks[0].x,landmarks[pip].y-landmarks[0].y);
+          const a={x:landmarks[mcp].x-landmarks[pip].x,y:landmarks[mcp].y-landmarks[pip].y};
+          const b={x:landmarks[tip].x-landmarks[pip].x,y:landmarks[tip].y-landmarks[pip].y};
+          const straightCos=(a.x*b.x+a.y*b.y)/((Math.hypot(a.x,a.y)*Math.hypot(b.x,b.y))||1);
+          return tipToWrist>pipToWrist*1.08||(tipToWrist>pipToWrist*.92&&straightCos<-.72);
+        };
+        const indexExtended=fingerExtended(8,6,5);
+        const middleExtended=fingerExtended(12,10,9);
+        const ringExtended=fingerExtended(16,14,13);
+        const pinkyExtended=fingerExtended(20,18,17);
+        const thumbExtended=fingerExtended(4,3,2)&&Math.hypot(thumb.x-landmarks[9].x,thumb.y-landmarks[9].y)>Math.hypot(landmarks[3].x-landmarks[9].x,landmarks[3].y-landmarks[9].y)*1.08;
+        let otherCurled=0;
+        for (const [tip,joint] of [[8,6],[12,10],[16,14],[20,18]]) {
+          const tipDistance=Math.hypot(landmarks[tip].x-landmarks[0].x,landmarks[tip].y-landmarks[0].y);
+          const jointDistance=Math.hypot(landmarks[joint].x-landmarks[0].x,landmarks[joint].y-landmarks[0].y);
+          if (tip!==8&&tipDistance<jointDistance) otherCurled++;
+        }
+        const pointPose=indexExtended&&otherCurled===3;
+        tracked.pointFrames=pointPose?Math.min(3,tracked.pointFrames+1):0;
+        const rawPoint=pointPose&&(tracked.mode==='point'||tracked.pointFrames>=2);
+        const openPalm=thumbExtended&&indexExtended&&middleExtended&&ringExtended&&pinkyExtended&&ratio>.48;
+        tracked.palmFrames=openPalm?Math.min(3,tracked.palmFrames+1):0;
+        const rawPalm=openPalm&&(tracked.mode==='palm'||tracked.palmFrames>=2);
+        const closedHand=!indexExtended&&otherCurled===3;
+        const pinchOn=.17+settings.sensitivity*.0008;
+        const pinchOff=pinchOn+.16;
+        const wasPinching=tracked.drawing&&tracked.mode==='pinch';
+        const rawPinch=wasPinching?ratio<pinchOff&&!closedHand&&!openPalm&&!pointPose:ratio<pinchOn&&indexExtended&&!openPalm&&!pointPose;
+        const detectedMode=rawPalm?'palm':rawPoint?'point':rawPinch?'pinch':null;
+        const pinchPoint=landmarkPoint({x:(thumb.x+index.x)/2,y:(thumb.y+index.y)/2});
+        const palmIds=[0,5,9,13,17];
+        const palmPoint=landmarkPoint({
+          x:palmIds.reduce((sum,id)=>sum+landmarks[id].x,0)/palmIds.length,
+          y:palmIds.reduce((sum,id)=>sum+landmarks[id].y,0)/palmIds.length
+        });
+        const indexKnuckle=landmarkPoint(landmarks[5]);
+        const pinkyKnuckle=landmarkPoint(landmarks[17]);
+        const wrist=landmarkPoint(landmarks[0]);
+        const middleKnuckle=landmarkPoint(landmarks[9]);
+        const palmRadius=Math.max(
+          Math.hypot(indexKnuckle.x-pinkyKnuckle.x,indexKnuckle.y-pinkyKnuckle.y),
+          Math.hypot(wrist.x-middleKnuckle.x,wrist.y-middleKnuckle.y)
+        )*1.6;
+        const previousMode=tracked.mode;
+        const nextOffFrames=detectedMode?0:tracked.offFrames+1;
+        const mode=detectedMode||((tracked.drawing&&nextOffFrames<2)?previousMode:null);
+        const point=mode==='palm'?palmPoint:mode==='pinch'?pinchPoint:indexPoint;
+        if (point.x<0||point.x>w||point.y<0||point.y>h) continue;
+        const switched=mode&&tracked.mode&&mode!==tracked.mode;
+        const jumped=mode==='palm'&&Math.hypot(point.x-tracked.tx,point.y-tracked.ty)>Math.max(w,h)*.3;
+        if (switched||jumped) {
+          resetPath(tracked); tracked.x=point.x; tracked.y=point.y; tracked.tx=point.x; tracked.ty=point.y;
+        }
+        const landmarkEase=Math.max(.25,.70-settings.smoothing*.0042);
+        const tx=tracked.tx+(point.x-tracked.tx)*landmarkEase;
+        const ty=tracked.ty+(point.y-tracked.ty)*landmarkEase;
+        if (Math.hypot(tx-tracked.tx,ty-tracked.ty)>.0006*w) {tracked.tx=tx;tracked.ty=ty;}
+        tracked.offFrames=nextOffFrames;
+        const drawing=!!mode;
+        if (!drawing&&tracked.drawing) resetPath(tracked);
+        tracked.drawing=drawing; tracked.mode=mode||tracked.mode; tracked.radius=mode==='palm'?palmRadius:brushRadius();
+        tracked.seenAt=performance.now(); tracked.live=true;
       }
-      const pointPose=indexExtended&&otherCurled===3;
-      pointFrames=pointPose?Math.min(3,pointFrames+1):0;
-      const rawPoint=pointPose&&(tracked?.mode==='point'||pointFrames>=2);
-      const openPalm=thumbExtended&&indexExtended&&middleExtended&&ringExtended&&pinkyExtended&&ratio>.48;
-      palmFrames=openPalm?Math.min(3,palmFrames+1):0;
-      const rawPalm=openPalm&&(tracked?.mode==='palm'||palmFrames>=2);
-      const closedHand=!indexExtended&&otherCurled===3;
-      const pinchOn=.17+settings.sensitivity*.0008;
-      const pinchOff=pinchOn+.16;
-      const wasPinching=tracked?.drawing&&tracked.mode==='pinch';
-      const rawPinch=wasPinching ? ratio<pinchOff&&!closedHand&&!openPalm&&!pointPose : ratio<pinchOn&&indexExtended&&!openPalm&&!pointPose;
-      const detectedMode=rawPalm?'palm':rawPoint?'point':rawPinch?'pinch':null;
-      const pinchPoint=landmarkPoint({x:(thumb.x+index.x)/2,y:(thumb.y+index.y)/2});
-      const indexPoint=landmarkPoint(index);
-      const palmIds=[0,5,9,13,17];
-      const palmPoint=landmarkPoint({
-        x:palmIds.reduce((sum,id)=>sum+landmarks[id].x,0)/palmIds.length,
-        y:palmIds.reduce((sum,id)=>sum+landmarks[id].y,0)/palmIds.length
-      });
-      const indexKnuckle=landmarkPoint(landmarks[5]);
-      const pinkyKnuckle=landmarkPoint(landmarks[17]);
-      const wrist=landmarkPoint(landmarks[0]);
-      const middleKnuckle=landmarkPoint(landmarks[9]);
-      const palmRadius=Math.max(
-        Math.hypot(indexKnuckle.x-pinkyKnuckle.x,indexKnuckle.y-pinkyKnuckle.y),
-        Math.hypot(wrist.x-middleKnuckle.x,wrist.y-middleKnuckle.y)
-      )*1.6;
-      const previousMode=tracked?.mode||null;
-      const nextOffFrames=detectedMode?0:(tracked?.offFrames||0)+1;
-      const mode=detectedMode||((tracked?.drawing&&nextOffFrames<2)?previousMode:null);
-      const point=mode==='palm'?palmPoint:mode==='point'?indexPoint:pinchPoint;
-      if (point.x<0||point.x>w||point.y<0||point.y>h) return;
-      if (!tracked) tracked={tx:point.x,ty:point.y,x:point.x,y:point.y,drawing:false,mode:null,offFrames:0,seenAt:performance.now(),live:true};
-      const switched=mode&&tracked.mode&&mode!==tracked.mode;
-      const jumped=mode==='palm'&&Math.hypot(point.x-tracked.tx,point.y-tracked.ty)>Math.max(w,h)*.3;
-      if (switched||jumped) {
-        resetPath(tracked); tracked.x=point.x; tracked.y=point.y; tracked.tx=point.x; tracked.ty=point.y;
+      for (const [key,tracked] of trackedHands) {
+        if (!seen.has(key)) {tracked.live=false;tracked.pointFrames=0;tracked.palmFrames=0;}
       }
-      const landmarkEase=Math.max(.25,.70-settings.smoothing*.0042);
-      const tx=tracked.tx+(point.x-tracked.tx)*landmarkEase;
-      const ty=tracked.ty+(point.y-tracked.ty)*landmarkEase;
-      if (Math.hypot(tx-tracked.tx,ty-tracked.ty)>.0006*w) {tracked.tx=tx;tracked.ty=ty;}
-      tracked.offFrames=nextOffFrames;
-      const drawing=!!mode;
-      if (!drawing&&tracked.drawing) resetPath(tracked);
-      tracked.drawing=drawing; tracked.mode=mode||tracked.mode; tracked.radius=mode==='palm'?palmRadius:brushRadius();
-      tracked.seenAt=performance.now(); tracked.live=true;
-      pinched=drawing;
-      if (mode==='palm') {
-        if (status.textContent!=='Open palm · Broad wipe') status.textContent='Open palm · Broad wipe';
-      } else if (mode==='point') {
-        if (status.textContent!=='Pointing · Fine wipe') status.textContent='Pointing · Fine wipe';
-      } else if (mode==='pinch') {
-        if (status.textContent!=='Pinching · Fine wipe') status.textContent='Pinching · Fine wipe';
-      } else if (status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
+      const active=[...trackedHands.values()].filter(tracked=>tracked.live&&tracked.drawing);
+      handDrawing=active.length>0;
+      if (active.length>1) status.textContent='Two hands active · Wiping';
+      else if (active[0]?.mode==='palm') status.textContent='Open palm · Broad wipe';
+      else if (active[0]?.mode==='point') status.textContent='Pointing · Fine wipe';
+      else if (active[0]?.mode==='pinch') status.textContent='Pinching · Fine wipe';
+      else if (status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')||status.textContent.startsWith('Two hands')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
     }
 
     function advanceBrush(time) {
-      if (!tracked) return;
-      if (time-tracked.seenAt>250) {
-        if (tracked.drawing) resetPath(tracked);
-        tracked=null; pinched=false;
-        if (status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
-        return;
+      let activeCount=0;
+      for (const [key,tracked] of trackedHands) {
+        if (time-tracked.seenAt>250) {
+          if (tracked.drawing) resetPath(tracked);
+          trackedHands.delete(key);
+          continue;
+        }
+        const chase=Math.max(.10,.45-settings.smoothing*.0038);
+        tracked.x+=(tracked.tx-tracked.x)*chase;
+        tracked.y+=(tracked.ty-tracked.y)*chase;
+        if (tracked.drawing&&tracked.mode==='palm') palmStamp(tracked,tracked.x,tracked.y,tracked.radius);
+        else if (tracked.drawing) eraseCurve(tracked,tracked.x,tracked.y,brushRadius(),.96);
+        else resetPath(tracked);
+        if (tracked.drawing) activeCount++;
       }
-      const chase=Math.max(.10,.45-settings.smoothing*.0038);
-      tracked.x+=(tracked.tx-tracked.x)*chase;
-      tracked.y+=(tracked.ty-tracked.y)*chase;
-      if (tracked.drawing&&tracked.mode==='palm') palmStamp(tracked,tracked.x,tracked.y,tracked.radius);
-      else if (tracked.drawing) eraseCurve(tracked,tracked.x,tracked.y,brushRadius(),.96);
-      else resetPath(tracked);
+      handDrawing=activeCount>0;
+      if (!activeCount&&(status.textContent.startsWith('Pointing')||status.textContent.startsWith('Pinching')||status.textContent.startsWith('Open palm')||status.textContent.startsWith('Two hands'))) status.textContent='Camera active · Point for detail, open your palm for a broad wipe';
     }
 
     function softBlob(target,x,y,radius,alpha) {
@@ -398,7 +408,7 @@
     }
     function onFaces(results) {
       if (!stream) return;
-      if (pinched) { mouthOpenSince=0; return; }
+      if (handDrawing) { mouthOpenSince=0; return; }
       const landmarks=results.multiFaceLandmarks?.[0];
       if (!landmarks) { mouthOpenSince=0; return; }
       const top=landmarks[13], bottom=landmarks[14], left=landmarks[61], right=landmarks[291];
@@ -431,7 +441,7 @@
           loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js')
         ]);
         hands=new window.Hands({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${file}`});
-        hands.setOptions({maxNumHands:1,modelComplexity:0,minDetectionConfidence:.6,minTrackingConfidence:.6});
+        hands.setOptions({maxNumHands:2,modelComplexity:0,minDetectionConfidence:.6,minTrackingConfidence:.6});
         hands.onResults(onHands);
         faceMesh=new window.FaceMesh({locateFile:file=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/${file}`});
         faceMesh.setOptions({maxNumFaces:1,refineLandmarks:false,minDetectionConfidence:.6,minTrackingConfidence:.6});
@@ -498,7 +508,7 @@
         if (video.cancelVideoFrameCallback) video.cancelVideoFrameCallback(frameRequest);
         else cancelAnimationFrame(frameRequest);
       }
-      frameRequest=null; pinched=false; pointFrames=0; palmFrames=0; tracked=null; mouthOpenSince=0; sceneDirty=true;
+      frameRequest=null; handDrawing=false; trackedHands.clear(); mouthOpenSince=0; sceneDirty=true;
     }
 
     function render(time) {
