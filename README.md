@@ -1,6 +1,6 @@
 # Fog Mirror
 
-**Yuzhuo's playground experiment**
+**Yui's playground experiment**
 
 Fog Mirror turns your webcam into a full-screen condensation mirror. Point at the glass to make a precise wipe, open your palm to clear a broad area, or open your mouth to let fog bloom back over the reflection.
 
